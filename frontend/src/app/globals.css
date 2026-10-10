@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Canvas & Neutral Hierarchy (DESIGN.md) */
+  --background: 222 47% 6%;          /* #080B11 Deep Obsidian Slate */
+  --surface: 222 40% 9%;             /* #0E131F Card & Table Surface */
+  --surface-hover: 222 35% 13%;       /* #151D2F Hover Row Surface */
+  --surface-raised: 222 30% 16%;      /* #1D263B Modal / Popover */
+  --border: 222 25% 18%;              /* #222C42 Subtle Hairline Border */
+  --border-active: 222 40% 30%;       /* #2E3E61 Active Border */
+  
+  /* Typography Colors */
+  --text-primary: 210 40% 98%;        /* #F8FAFC Bright Crisp White */
+  --text-secondary: 215 20% 70%;      /* #94A3B8 Muted Information */
+  --text-tertiary: 215 15% 45%;       /* #64748B Inactive / Placeholders */
+
+  /* Functional Financial Semantics */
+  --profit: 152 76% 45%;              /* #1BC773 Institutional Emerald */
+  --profit-subtle: 152 76% 12%;       /* Profit background badge */
+  --loss: 350 89% 60%;                /* #F43F5E Precision Crimson/Rose */
+  --loss-subtle: 350 89% 14%;         /* Loss background badge */
+  --warning: 38 92% 50%;              /* #F59E0B Warning / Breach Amber */
+  --neutral-blue: 217 91% 60%;        /* #3B82F6 Information / Ticker Blue */
+
+  /* Data Distinction Badges */
+  --badge-verified: 152 76% 45%;      /* [VERIFIED DATA] */
+  --badge-calc: 187 92% 52%;          /* [CALCULATED METRICS] */
+  --badge-hist: 217 91% 60%;          /* [HISTORICAL STATISTICS] */
+  --badge-ml: 38 92% 50%;             /* [ML ESTIMATES] */
+  --badge-ai: 271 91% 65%;            /* [AI INTERPRETATION] */
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--text-primary));
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Scrollbar for FinTech data density */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--background));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--border-active));
+}
