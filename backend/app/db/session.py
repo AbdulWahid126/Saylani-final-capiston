@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -10,7 +11,8 @@ engine_kwargs = {
     "future": True,
 }
 
-# Add pool pre-ping only for network databases (e.g. Postgres)
+# Add pool pre-ping and pooler configurations for network databases
+connect_args: dict[str, Any] = {}
 if "sqlite" not in settings.DATABASE_URL:
     engine_kwargs.update(
         {
@@ -19,6 +21,12 @@ if "sqlite" not in settings.DATABASE_URL:
             "max_overflow": 20,
         }
     )
+    # Supabase Transaction Pooler (port 6543) requires statement_cache_size=0
+    if "pooler.supabase.com" in settings.DATABASE_URL or ":6543" in settings.DATABASE_URL:
+        connect_args["statement_cache_size"] = 0
+
+if connect_args:
+    engine_kwargs["connect_args"] = connect_args
 
 async_engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
 

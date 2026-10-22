@@ -14,10 +14,21 @@ dependencies = [
     "pydantic>=2.7.0",
     "pydantic-settings>=2.3.0",
     "sqlalchemy>=2.0.30",
+    "alembic>=1.13.1",
     "asyncpg>=0.29.0",
+    "pgvector>=0.3.0",
     "aiosqlite>=0.20.0",
     "python-dotenv>=1.0.1",
+    "pyjwt>=2.8.0",
+    "bcrypt>=4.1.0",
+    "MetaTrader5>=5.0.6231; sys_platform == 'win32'",
+    "cryptography>=42.0.0",
+    "tzdata>=2024.1",
+    "pypdf>=4.2.0",
+    "langgraph>=1.2.0",
+    "pillow>=10.3.0",
 ]
+
 
 [project.optional-dependencies]
 dev = [

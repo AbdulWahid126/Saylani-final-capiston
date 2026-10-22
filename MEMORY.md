@@ -99,11 +99,324 @@
     - Executive dashboard layout with Recharts equity curve and behavioral guard indicators.
     - Eslint verification: `✔ No ESLint warnings or errors`.
     - Production build verification: `npm run build` compiled successfully (5/5 static routes prerendered).
+  - **TASK-003: PostgreSQL & pgvector Schema Setup with Alembic:**
+    - Python 3.12.10 environment configured in `backend/.venv`.
+    - Pinned dependencies installed: `alembic>=1.13.1`, `pgvector>=0.3.0`, `asyncpg>=0.29.0`, `sqlalchemy>=2.0.30`.
+    - SQLAlchemy 2.0 declarative models created for all 9 entities: `User`, `TradingAccount`, `RawMT5Deal`, `Strategy`, `JournalEntry`, `DealJournalMapping`, `UserRule`, `DocumentKnowledge`, `DocumentChunk` with `Vector(1536)`.
+    - Dynamic async Alembic configuration (`alembic.ini`, `alembic/env.py`) with automatic `postgresql+asyncpg://` dialect handling and Supabase pooler statement cache tuning.
+    - Initial schema migration `d02be136d042_initial_schema_setup.py` executed against live Supabase PostgreSQL 17 database (`alembic upgrade head`). Verified at revision `d02be136d042 (head)`.
+    - Verified all 10 tables, 12 foreign keys, 31 indexes, and `vector(1536)` column on live Supabase instance via `backend/scripts/verify_tables.py`.
+    - Diagnostic verification tool `backend/scripts/verify_supabase.py` with zero-exposure credential masking and network pooler diagnosis.
+    - Pytest test suite: 7/7 tests passed in 0.50s (`test_database.py`, `test_health.py`, `test_errors.py`).
+    - Ruff linting and formatting: 100% clean.
+  - **TASK-004: JWT Authentication & User Isolation Middleware:**
+    - Bcrypt password hashing (`backend/app/core/security.py`) with work factor 12 and constant-time check.
+    - RFC 7519 JWT access-token generator and verifier using `pyjwt` with HS256 algorithm pinning, expiry enforcement, and standard claims (`sub`, `exp`, `iat`, `nbf`).
+    - Pydantic v2 schemas (`backend/app/schemas/auth.py`) for registration, credential login, token response, and sanitized user profiles.
+    - Reusable authentication dependency `get_current_user` and tenant isolation helper `enforce_resource_ownership` in `backend/app/api/deps.py`.
+    - Endpoints implemented in `backend/app/api/v1/endpoints/auth.py`: `/api/v1/auth/register` (201), `/api/v1/auth/login` (200), and `/api/v1/auth/me` (200). Registered in `api_v1_router`.
+    - Typed error handling in `backend/app/core/errors.py`: `AuthenticationError` (401), `ForbiddenError` (403), `ConflictError` (409), `BadRequestError` (400).
+    - Verified registration, credential check, JWT issuance, and user isolation against live Supabase PostgreSQL database using safe transactional rollback script (`backend/scripts/verify_auth_rollback.py`) with zero committed residual test data.
+    - Pytest test suite: 19/19 passed in 8.15s (`test_auth.py`, `test_database.py`, `test_health.py`, `test_errors.py`).
+    - Ruff linting and formatting: 100% clean across all 36 files.
+  - **TASK-005: MT5 Windows Terminal IPC Proof-of-Concept (POC):**
+    - Environment verified: Python 3.12.10 AMD64 on Windows 11; terminal executable confirmed at `C:\Program Files\MetaTrader 5\terminal64.exe` (119MB).
+    - Dependencies installed and pinned: `MetaTrader5>=5.0.6231,<6.0.0; sys_platform == 'win32'` in `backend/requirements.txt` and `backend/pyproject.toml`.
+    - Typed Pydantic v2 schemas created in `backend/app/schemas/mt5.py`: `MT5TerminalStatus`, `MT5AccountInfo` (with automatic middle-digit masking: `masked_login`), `MT5DealInfo`, `MT5PositionInfo`, `MT5ConnectionDiagnostics`.
+    - Read-only connector service implemented in `backend/app/services/mt5_connector.py` with backward-compatible shim `backend/services/mt5_connector.py`.
+    - Law of Read-Only Safety strictly enforced: `order_send()`, `order_check()`, and `position_close()` methods immediately raise `PermissionError`.
+    - Context manager protocols (`__enter__`, `__exit__`) guarantee clean `shutdown()` even on unexpected exceptions.
+    - Standalone CLI diagnostic script `backend/scripts/test_mt5_connection.py` created with non-zero exit code reporting and masked diagnostic output.
+    - Verified against host MT5 terminal: IPC initialization executed against `C:\Program Files\MetaTrader 5\terminal64.exe`; handled unauthenticated terminal session (`-6, 'Terminal: Authorization failed'`) gracefully without crashing.
+    - Pytest test suite: 14 new mock unit tests in `backend/tests/test_mt5_connector.py`. Total test suite: 33/33 passed in 8.37s.
+    - Ruff linting and formatting: 100% clean across all 44 backend files.
+  - **TASK-006: Trading Account CRUD & Credential Encryption:**
+    - AES-256-GCM authenticated encryption/decryption implemented in `backend/app/core/security.py` using standard `cryptography` library with cryptographically secure 12-byte random nonces and 16-byte authentication tags.
+    - Added key validation logic: guards against empty, truncated, or default development keys in production.
+    - Pydantic v2 schemas created in `backend/app/schemas/account.py`: `TradingAccountCreate`, `TradingAccountUpdate`, `TradingAccountResponse` (with `has_investor_password` boolean and strict zero-exposure of plaintext passwords or ciphertexts), and `TradingAccountDeleteResponse`.
+    - CRUD endpoints implemented in `backend/app/api/v1/endpoints/accounts.py`: `POST /api/v1/accounts` (201), `GET /api/v1/accounts` (200), `GET /api/v1/accounts/{id}` (200), `PUT /api/v1/accounts/{id}` (200), and `DELETE /api/v1/accounts/{id}` (200).
+    - Multi-tenant boundary verified: User A vs User B cross-tenant reads, updates, and deletes strictly blocked with `403 Forbidden`.
+    - Safe historical trade retention policy: Deleting an account containing existing historical deals or journal entries is blocked with `409 Conflict` unless explicit `force=true` query parameter is passed.
+    - Tested against live Supabase PostgreSQL database using safe transactional rollback script (`backend/scripts/verify_accounts_rollback.py`) with zero residual committed test data.
+    - Pytest test suite: 13 new unit/integration tests in `backend/tests/test_accounts.py`. Total test suite: 46/46 passed in 12.90s.
+    - Ruff linting and formatting: 100% clean across all 48 backend files.
+  - **TASK-007: Automated Deal Aggregator & Idempotent Sync Worker:**
+    - Background sync engine implemented in `backend/app/services/sync_worker.py` (with compatibility shim at `backend/services/sync_worker.py`).
+    - Fetches bounded historical deals from MetaTrader 5 terminal via read-only IPC connector.
+    - Ingests immutable raw deals into `raw_mt5_deals` with `deal_ticket` deduplication per trading account.
+    - Deterministic volume-weighted pricing calculation for entries and exits (`sum(price * volume) / sum(volume)`).
+    - Multi-deal position lifecycle reconciliation: correctly tracks `OPEN` -> `PARTIAL` -> `CLOSED` position status.
+    - Realized P&L calculations strictly deterministic in Python: `gross_profit + commission + swap + fee = net_pnl` (zero LLM financial arithmetic).
+    - Segregates non-trade balance operations (`position_id == 0`) from trade position aggregation to avoid polluting trade journals.
+    - Maintains `deal_journal_mappings` linking each raw execution deal to its aggregated `journal_entries` record.
+    - Preserves user-authored metadata (`user_notes`, `emotional_state`, `strategy_id`, `setup_tag`) during re-sync runs.
+    - Enforces stable SHA-256 idempotency hash `sha256(f"{account_id}:{broker_position_id}")` backed by database unique constraints; repeat runs create 0 duplicate raw deals or journal entries.
+    - Endpoint implemented: `POST /api/v1/accounts/{account_id}/sync` with strict user tenancy validation and date bounds checking.
+    - Hardened production security: `validate_production_security()` actively rejects development keys or secrets when `ENVIRONMENT=production`.
+    - Verified against live Supabase PostgreSQL database via `backend/scripts/verify_sync_rollback.py` with transactional rollback.
+    - Pytest test suite: 9 new unit/integration tests in `backend/tests/test_mt5_sync.py`. Full test suite: 55/55 tests passed in 18.98s.
+    - Ruff linting and formatting: 100% clean across all 53 backend files.
+  - **TASK-008: CSV Trade History Import & Manual Entry Fallback:**
+    - File upload limits configured in `backend/app/core/config.py`: `MAX_CSV_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024` (5 MB) and `MAX_CSV_IMPORT_ROWS = 2000`.
+    - Pydantic v2 schemas created in `backend/app/schemas/journal.py`: `JournalEntryCreate`, `JournalEntryUpdate`, `JournalEntryResponse`, `JournalListResponse`, `CSVRowError`, `CSVPreviewResponse`, `CSVImportResponse`.
+    - CSV parser & importer implemented in `backend/app/services/csv_importer.py` (with compatibility shim at `backend/services/csv_importer.py`). Supports both canonical headers (`symbol`, `direction`, `open_time`, `close_time`, `volume`, `entry_price`, `exit_price`, etc.) and standard MT5 report exports with duplicate column names (`Time` -> `open_time`, second `Time` -> `close_time`; `Price` -> `entry_price`, second `Price` -> `exit_price`).
+    - Robust sanitization against CSV/spreadsheet formula injection (`=`, `+`, `-`, `@`).
+    - Database idempotency hashing: `f"csv:{sha256(raw_seed).hexdigest()[:60]}"` for CSV imports and `f"man:{sha256(unique_seed).hexdigest()[:60]}"` for manual entries; repeated imports skip duplicates with zero additional database records.
+    - Endpoints implemented in `backend/app/api/v1/endpoints/journal.py`:
+      - `POST /api/v1/journal/entries`: Manual trade creation with deterministic P&L and R:R calculations (zero LLM math). Supports open or closed trades.
+      - `GET /api/v1/journal/entries`: Filtered, paginated journal list with multi-tenant isolation.
+      - `GET /api/v1/journal/entries/{id}`: Single entry retrieval with ownership check.
+      - `PUT /api/v1/journal/entries/{id}`: Updates user notes, emotional state, tags; strictly blocks modifying market execution data (`symbol`, `volume`, `entry_price`, `net_pnl`, etc.) on MT5-synced trades with `400 Bad Request`.
+      - `DELETE /api/v1/journal/entries/{id}`: Deletes manual or CSV trades; MT5-synced trades require explicit `force=true`. Never deletes underlying raw MT5 deals.
+      - `POST /api/v1/journal/csv/preview` & `POST /api/v1/accounts/{id}/journal/csv/preview`: Dry-run validation without database mutations.
+      - `POST /api/v1/journal/csv/import` & `POST /api/v1/accounts/{id}/journal/csv`: Atomic transaction import skipping duplicates.
+    - Verified against live Supabase PostgreSQL database via `backend/scripts/verify_csv_and_manual_rollback.py` with 100% transactional rollback (0 residual committed test data).
+    - Pytest test suite: 13 new unit/integration tests in `backend/tests/test_csv_and_manual_journal.py`. Full test suite: 68/68 tests passed in 29.91s.
+    - Ruff linting and formatting: 100% clean across all 59 backend files.
+  - **TASK-009: Deterministic Financial Analytics Engine:**
+    - Engine implemented in `backend/app/analytics/engine.py` (with compatibility shim at `backend/analytics/engine.py`).
+    - Strictly non-hallucinated math: All calculations execute in pure Python/NumPy (zero LLM arithmetic).
+    - Closed Trade Segregation: Open and partial positions are cleanly counted in `open_trades_count` and segregated from closed performance metrics.
+    - Financial Metrics: Total closed trades, wins, losses, breakeven trades, win rate (%), loss rate (%), gross profit, gross loss, net P&L (accounting for commissions, swaps, fees), average win, average loss, win/loss ratio, profit factor (safely `None` on zero loss), expectancy per trade, max consecutive wins/losses, current streak.
+    - Chronological Equity Curve: Chronological sequence sorted by `(close_time, open_time, id)` with origin point, tracking high-water mark peak equity, monetary drawdown ($), and percentage drawdown (%).
+    - Risk-Adjusted Ratios & Assumptions: Sharpe and Sortino ratios computed with explicitly documented assumptions (`return_series`, `risk_free_rate_annual`, `risk_free_rate_per_period`, `downside_deviation_target`, `is_annualized: False` with irregular trade frequency notes). Zero-variance and zero-downside edge cases safely return `None`.
+    - Multidimensional Breakdowns: Aggregations by symbol, direction, session, day of week, hour of day, and strategy.
+    - Currency Isolation: Multi-account aggregation strictly enforces single-currency consistency. Mixed-currency queries without an explicit `account_id` or `currency` filter are rejected with `400 Bad Request`.
+    - Authenticated Endpoints: Implemented in `backend/app/api/v1/endpoints/analytics.py` (`GET /api/v1/analytics/summary`, `GET /api/v1/analytics/equity-curve`, `GET /api/v1/analytics/breakdowns`, and account shortcuts `/api/v1/accounts/{id}/analytics/...`).
+    - Tested against live Supabase PostgreSQL database via `backend/scripts/verify_analytics_rollback.py` with 100% transactional rollback (0 residual committed test data).
+    - Pytest test suite: 11 new unit and integration tests in `backend/tests/test_analytics.py`. Full test suite: 79/79 passed in 36.81s.
+    - Ruff linting and formatting: 100% clean across all 67 backend files.
+  - **TASK-010: Prop Firm Risk Manager Engine:**
+    - Deterministic risk engine implemented in `backend/app/analytics/risk_engine.py` (with compatibility shim at `backend/analytics/risk_engine.py`).
+    - Pydantic v2 schemas created in `backend/app/schemas/risk.py`: `DrawdownModel`, `DailyLossCalculationBasis`, `RiskStatusLevel`, `PropRiskProfileBase`, `PropRiskProfileCreate`, `PropRiskProfileUpdate`, `PropRiskProfileResponse`, `DailyRiskStatus`, `OverallRiskStatus`, `ProfitTargetStatus`, `RiskSnapshotOverride`, `RiskEvaluationRequest`, `AccountRiskEvaluationResponse`.
+    - Built-in Example Templates: Pre-configured challenge templates (`TEMPLATE_2STEP_100K`, `TEMPLATE_1STEP_TRAILING_50K`, `TEMPLATE_STATIC_10K`), clearly labeled as examples with zero claims of official endorsement.
+    - Timezone & Session Reset Math: Implemented `get_daily_reset_window` using Python's `zoneinfo` and `tzdata` package, handling IANA timezones (e.g. `Europe/Prague`, `America/New_York`, `UTC`) and Daylight Saving Time (DST) transitions safely with UTC fallbacks.
+    - Daily Loss Calculations: Supports both `EQUITY_BASED` (including open floating P&L) and `BALANCE_BASED` (closed session trades only) daily drawdown tracking against reference balance.
+    - Static vs Trailing Drawdown: Implemented static floor calculations and trailing high-water mark (HWM) drawdown with optional initial balance locking (`trail_locks_at_initial_balance`).
+    - Visual Risk Gauges: Precise status transitions: GREEN (<50%), AMBER (50-80%), RED (>80%), and BREACHED (>=100%).
+    - Missing Data Safeguards: Uninitialized/missing account data returns `is_data_available: False` and `UNAVAILABLE` status rather than zero risk.
+    - Authenticated Endpoints implemented in `backend/app/api/v1/endpoints/risk.py`:
+      - `POST /api/v1/risk/profiles`: Persists custom risk profiles in `user_rules` table (`rule_type="PROP_PROFILE"`).
+      - `GET /api/v1/risk/profiles`: Lists user's custom profiles plus built-in challenge templates.
+      - `GET /api/v1/risk/profiles/{id}`: Retrieves profile by UUID or template slug.
+      - `PUT /api/v1/risk/profiles/{id}`: Updates user's custom profile with ownership validation.
+      - `DELETE /api/v1/risk/profiles/{id}`: Deletes user's custom profile.
+      - `GET /api/v1/risk/accounts/{account_id}/risk`: Evaluates account risk using default or query-specified profile.
+      - `POST /api/v1/risk/accounts/{account_id}/risk/evaluate`: Evaluates risk with optional manual snapshot override (useful when MT5 terminal is offline).
+    - Tested against live Supabase PostgreSQL database via `backend/scripts/verify_risk_rollback.py` with 100% transactional rollback (0 residual committed test records).
+    - Pytest test suite: 9 new unit and integration tests in `backend/tests/test_risk_engine.py`. Full test suite: 88/88 passed in 39.49s.
+    - Ruff linting and formatting: 100% clean across all 72 backend files.
+  - **TASK-011: Trading Behavior Analyzer:**
+    - Deterministic behavioral analytics engine implemented in `backend/app/analytics/behavior_analyzer.py` (with compatibility shim at `backend/analytics/behavior_analyzer.py`).
+    - Pydantic v2 schemas created in `backend/app/schemas/behavior.py`: `BehaviorPatternType`, `BehaviorSeverity`, `ThresholdSource`, `BehaviorFinding`, `BehaviorAnalysisConfig`, `BehaviorPatternSummary`, `BehaviorSummaryResponse`, `BehaviorFindingsResponse`, `BehaviorUserConfigRequest`, `BehaviorUserConfigResponse`.
+    - **Rapid Re-entry After Loss ("Revenge Trading"):** Evaluates post-loss re-entries within configurable window (default 15 minutes) comparing actual trade open time against prior trade close time. Segregates concurrent/overlapping positions (where subsequent trade opened before prior trade closed). Reports exact evidence: time gap, prior loss, subsequent volume, and volume ratio. Labeled strictly as statistical flag `"rapid_reentry_after_loss"` without psychological diagnosis.
+    - **Overtrading Frequency:** Detects high frequency by calendar day and session tag. Distinguishes `user_configured` thresholds from `baseline_inferred` thresholds (computed as mean + 1.5 std, floor 5, when $\ge 5$ active trading days exist). Safeguards against inventing universal thresholds when baseline history is insufficient.
+    - **Risk Escalation (Martingale-like Sizing):** Evaluates position size increases following losses. Normalizes comparisons to the same instrument (`compare_same_symbol_only=True`) to avoid contract size distortions across unrelated asset classes. Labeled as statistical sizing pattern.
+    - **Session Drift:** Evaluates trade entry times against user's defined active sessions (`allowed_sessions`) or local time windows using IANA timezones and DST transitions. Returns `insufficient_configuration` limitation rather than inventing preferred trading hours.
+    - **Discipline Score:** Computes deterministic 0-100 score based on finding frequency and severity deductions (High: -10, Medium: -5, Low: -2).
+    - **Authenticated Endpoints:** Implemented in `backend/app/api/v1/endpoints/behavior.py` (`GET /api/v1/behavior/summary`, `GET /api/v1/behavior/findings`, `POST /api/v1/behavior/analyze`, `GET /api/v1/accounts/{id}/behavior/...`, `GET /api/v1/behavior/config`, `PUT /api/v1/behavior/config`).
+    - Stored behavioral preferences persist in `user_rules` table (`rule_type="BEHAVIOR_CONFIG"`) with zero schema migration overhead.
+    - Tested against live Supabase PostgreSQL database via `backend/scripts/verify_behavior_rollback.py` with 100% transactional rollback (0 residual committed test records).
+    - Pytest test suite: 14 new unit and integration tests in `backend/tests/test_behavior_analyzer.py`. Full test suite: 102/102 passed in 43.24s.
+    - Ruff linting and formatting: 100% clean across all 78 backend files.
+  - **TASK-012: Personal Playbook Knowledge Base (pgvector RAG):**
+    - Database migration `a1b2c3d4e5f6_add_document_status_and_chunks.py` applied to live Supabase PostgreSQL, adding `status` (`String(30)`), `chunk_count` (`Integer`), and `error_message` (`Text`) to `document_knowledge`.
+    - Document parsing and ingestion implemented in `backend/app/services/document_parser.py`: supports `.txt`, `.md`, and `.pdf` (using pure-Python `pypdf>=4.2.0`), records page indices, enforces 10MB upload limit, 500 chunk ceiling, and sanitizes filenames against path traversal.
+    - Text chunker partitions text with sentence/paragraph boundary detection, configurable chunk size (default 800 chars) and overlap (default 100 chars).
+    - Embedding service in `backend/app/services/embedding_service.py`: 1536-dimensional embedding provider supporting OpenAI REST API (`text-embedding-3-small`) and deterministic offline token-based semantic mock embeddings for dev/tests.
+    - RAG retrieval engine in `backend/app/services/rag_engine.py`: uses native pgvector cosine distance `<=>` search on PostgreSQL and NumPy fallback for SQLite tests, strictly enforcing `WHERE user_id = :current_user_id`.
+    - Evidence-grounded Q&A synthesizer: produces citations (`PlaybookCitation` with document filename, page, and snippet), confidence scores, uncertainty limitations, and anti-prompt-injection isolation delimiters that treat uploaded text as untrusted data and neutralize malicious instructions or profit guarantee attempts.
+    - Authenticated Endpoints implemented in `backend/app/api/v1/endpoints/playbook.py` (`POST /api/v1/playbook/documents`, `GET /api/v1/playbook/documents`, `GET /api/v1/playbook/documents/{id}`, `DELETE /api/v1/playbook/documents/{id}`, `POST /api/v1/playbook/documents/{id}/reprocess`, `POST /api/v1/playbook/search`, `POST /api/v1/playbook/ask`).
+    - Tested against live Supabase PostgreSQL database via `backend/scripts/verify_playbook_rollback.py` with 100% transactional rollback (0 residual committed test records).
+    - Pytest test suite: 13 new unit and integration tests in `backend/tests/test_playbook_rag.py`. Full test suite: 115/115 passed in 43.59s.
+    - Ruff linting and formatting: 100% clean across all 87 backend files.
+  - **TASK-013: LangGraph AI Trade Reviewer (Pre & Post-Trade):**
+    - Database migration `b2c3d4e5f6a7_create_trade_reviews_table.py` applied to live Supabase PostgreSQL, creating `trade_reviews` table with multi-tenant foreign key cascade, JSON fields for risk assessment, playbook compliance citations, behavioral flags, badges, and limitations.
+    - SQLAlchemy model `TradeReview` created in `backend/app/models/reviewer.py` and exported in `app.models`.
+    - Pydantic v2 schemas created in `backend/app/schemas/reviewer.py`: `ReviewMode`, `TradeDirection`, `ReviewBadge`, `PreTradeReviewRequest`, `PostTradeReviewRequest`, `RiskAssessmentResult`, `PlaybookEvidenceItem`, `BehaviorContextItem`, `TradeReviewResponse`.
+    - Typed inspectable LangGraph StateGraph pipeline implemented in `backend/app/services/trade_reviewer.py`:
+      - **Input Validation:** Enforces positive prices, validates symbol string, and verifies geometry (BUY: TP > Entry > SL; SELL: SL > Entry > TP) with graceful short-circuit routing on validation errors.
+      - **Context Loading:** Securely fetches trading account, journal entry (for post-trade), and historical trade window strictly under `WHERE user_id = :current_user_id`.
+      - **Risk Evaluation:** Computes deterministic R:R ratio from price points. Prop firm risk evaluation via TASK-010 engine. Strictly disclaims pip/tick/currency conversions without verified broker instrument specifications.
+      - **Playbook Retrieval:** Vector semantic search via TASK-012 pgvector RAG engine retrieving user's relevant rules, setting match strength, page citations, and alignment status.
+      - **Behavior Analysis:** Deterministic check via TASK-011 for rapid re-entry window after loss and historical high/medium severity behavioral flags.
+      - **Evidence Validation & Contradiction Detection:** Cross-checks playbook requirements against trade geometry (e.g. stop loss mandates) and computes dynamic uncertainty rating.
+      - **Review Synthesis:** Deterministic executive summary with LLM synthesis enhancement inside untrusted delimiter boundaries and regex sanitization neutralizing malicious prompt injections or guaranteed profit promises.
+      - **Deterministic Badge Assignment:** Enforces authoritative precedence hierarchy (Risk Breach -> Risk Warning -> Missing Stop Loss -> Playbook Conflict -> Playbook Match -> Behavioral Pattern -> Risk Within Limits -> Insufficient Evidence -> Review Incomplete). Zero LLM assignment.
+    - Authenticated Endpoints implemented in `backend/app/api/v1/endpoints/reviewer.py` (`POST /api/v1/reviewer/pre-trade`, `POST /api/v1/reviewer/post-trade`, `GET /api/v1/reviewer/reviews`, `GET /api/v1/reviewer/reviews/{id}`, `DELETE /api/v1/reviewer/reviews/{id}`).
+    - Tested against live Supabase PostgreSQL database via `backend/scripts/verify_reviewer_rollback.py` with 100% clean teardown (0 residual test records).
+    - Pytest test suite: 9 new unit and integration tests in `backend/tests/test_trade_reviewer.py`. Full test suite: 124/124 passed in 47.65s.
+  - **TASK-014: AI Chart Screenshot Analyzer (Vision):**
+    - Database migration `c3d4e5f6a7b8_create_chart_analyses_table.py` applied to live Supabase PostgreSQL, creating `chart_analyses` table with multi-tenant foreign key cascade to `users.id`, JSON columns for market structure, key levels, trade setup, scenarios, playbook citations, limitations, and badges.
+    - SQLAlchemy model `ChartAnalysis` created in `backend/app/models/vision.py` and exported in `app.models`, with bidirectional cascade relationship on `User`.
+    - Pydantic v2 schemas created in `backend/app/schemas/vision.py`: `StrategyMode`, `ChartType`, `TrendDirection`, `LevelType`, `VisionBadge`, `KeyLevelObservation`, `MarketStructureObservation`, `TradeSetupObservation`, `ScenarioAnalysis`, `PlaybookCitationItem`, `ChartAnalysisResponse`.
+    - Secure Image Validation (`backend/app/services/image_validator.py`):
+      - Decompression bomb protection via Pillow `Image.MAX_IMAGE_PIXELS = 10_000_000`.
+      - Strict format checking (PNG, JPEG, WEBP), MIME verification, dimensions constraints (50px to 4096px).
+      - Safe re-encoding standardizing color channels and stripping potentially malicious EXIF / payload metadata.
+      - Filename sanitization protecting against path traversal.
+    - Vision Provider Abstraction (`backend/app/services/vision_provider.py`):
+      - Abstract `VisionProvider` protocol with factory `get_vision_provider()`.
+      - `MockVisionProvider`: Deterministic offline analysis supporting ICT (MSS, FVG, liquidity sweeps), SMC (Order Blocks, BOS, liquidity mitigation), Price Action (Support/Resistance, range bounces), and General chart analysis. Includes unreadable/blurry chart handling (`INSUFFICIENT_IMAGE_EVIDENCE`).
+      - `OpenAIVisionProvider`: Production integration with OpenAI Vision (`gpt-4o-mini` / `gpt-4o`) using base64 image data URLs, strict JSON schema formatting, and anti-prompt-injection isolation delimiters.
+      - Prompt injection guardrails neutralizing attempts embedded in image annotations or user prompts (`PROMPT_INJECTION_FLAGGED`).
+    - Chart Analysis Orchestrator (`backend/app/services/chart_analyzer.py`):
+      - Personal playbook cross-referencing via TASK-012 pgvector RAG (`search_playbook_chunks`), retrieving user-owned rules, generating exact document/page citations, and setting `PLAYBOOK_ALIGNED` or `PLAYBOOK_CONFLICT` badges.
+      - Trade setup geometry checking (verifying valid ordering for BUY/SELL orders) and visual R:R computation.
+      - Seamless handoff compatibility with TASK-013 LangGraph Pre-Trade Reviewer (`PreTradeReviewRequest`).
+    - Authenticated Endpoints implemented in `backend/app/api/v1/endpoints/vision.py`:
+      - `POST /api/v1/vision/analyze`: Multipart upload + strategy mode, custom prompt, and playbook toggle.
+      - `GET /api/v1/vision/analyses`: Paginated listing of user's past analyses.
+      - `GET /api/v1/vision/analyses/{id}`: Single analysis lookup with tenant ownership enforcement.
+      - `DELETE /api/v1/vision/analyses/{id}`: Deletes user's chart analysis.
+    - Frontend Interface created in `frontend/src/app/vision/page.tsx`:
+      - Drag-and-drop / file-picker with client-side image preview and clear button.
+      - Strategy mode pill selector (ICT, SMC, Price Action, General).
+      - Custom focus question input and personal playbook cross-referencing toggle.
+      - Comprehensive results display: Metadata header with mandatory `[AI INTERPRETATION]` badge, visual uncertainty rating bar, Market Structure card, Observable Trade Setup card, comparative Bullish vs Bearish scenarios with explicit invalidation conditions, retrieved playbook rule citations, limitations panel, and handoff action button to Pre-Trade Reviewer.
+    - Tested against live Supabase PostgreSQL database via `backend/scripts/verify_vision_rollback.py` with 100% clean teardown (0 residual test records).
+    - Pytest test suite: 15 unit and integration tests in `backend/tests/test_vision_analyzer.py`. Full test suite: 139/139 passed across all modules.
+    - Ruff linting and formatting: 100% clean across all 103 backend files.
+  - **TASK-015: Beginner Learning Hub & Curated Resource Discovery:**
+    - Structured Curriculum Content (`backend/app/learning_data/content.py`):
+      - 6 Core Tracks: Forex Fundamentals & Market Mechanics, Risk Management & Capital Preservation, Technical Analysis & Price Action Foundations, Smart Money Concepts (SMC) Framework, Inner Circle Trader (ICT) Framework, and Trading Psychology & Behavioral Discipline.
+      - 14 In-Depth Lessons with beginner-friendly explanations, measurable learning objectives, key terms glossaries, comprehensive markdown content, common beginner mistakes, quick recaps, and mandatory educational disclaimers.
+      - Deterministic hypothetical examples with step-by-step calculations (e.g. position sizing formula on a $25,000 account risking 1.0% with 25-pip stop loss deriving 1.00 lot) labeled with `[HYPOTHETICAL EXAMPLE]`.
+      - Objective framing: Explains that SMC and ICT are subjective discretionary heuristic frameworks, not empirically proven predictive methods. Strictly disclaims guaranteed returns or secret algorithmic claims.
+    - Curated Educational Resource Catalog (`backend/app/learning_data/content.py`):
+      - 14 vetted resources across official regulatory bodies (CFTC, BIS, Federal Reserve Bank of New York FX Committee), respected publishers (BabyPips, Investopedia, MetaQuotes), and seminal trading psychology and technical analysis textbooks (Mark Douglas, Dr. Brett Steenbarger, John J. Murphy).
+      - Zero affiliate or referral links; zero fabricated reviews or prices (paid books direct users to official provider for regional pricing).
+      - Multi-attribute filtering by topic, level (beginner, intermediate, advanced), cost (free, paid), format (article, video, course, book, documentation), and language.
+    - Service Layer (`backend/app/services/learning_service.py`):
+      - Fast, in-memory repository implementing category retrieval, lesson search/filtering, detail lookup by ID/slug, resource multi-attribute filtering, and pagination.
+    - Authenticated REST API (`backend/app/api/v1/endpoints/learning.py`):
+      - `GET /api/v1/learning/categories`: Ordered curriculum category list.
+      - `GET /api/v1/learning/lessons`: Filterable lesson summaries by category, difficulty, search term.
+      - `GET /api/v1/learning/lessons/{id_or_slug}`: Lesson detail by ID or slug with 404 handling.
+      - `GET /api/v1/learning/resources`: Filterable and paginated curated resources with query validation (422 on invalid page/size).
+      - `GET /api/v1/learning/resources/{id}`: Single resource detail with 404 handling.
+    - Frontend Interface (`frontend/src/app/learning/page.tsx` & `frontend/src/app/resources/page.tsx`):
+      - Dark obsidian theme, educational disclaimer banner, track overview cards, search & filter bars.
+      - Interactive Full Lesson Modal with learning objectives checklist, key terms dictionary, educational markdown, hypothetical example box, pitfalls list, and recap.
+      - Curated Resources tab with topic/cost/format filters, verified source badges, direct links with safe `rel="noopener noreferrer" target="_blank"`, and pagination controls.
+    - Pytest Test Suite (`backend/tests/test_learning_hub.py`):
+      - 14 focused tests covering category retrieval, lesson filtering, detail lookup, 404 errors, resource filtering across 5 attributes, pagination, 422 validation, auth enforcement (401 without JWT), URL integrity, empty search results, and deterministic math verification.
+      - Full backend test suite: 153/153 tests passed in 60.72s (100% pass rate).
+      - Ruff linting & formatting: 100% clean across all 109 backend files.
+  - **TASK-016: Design System Setup & Layout Shell:**
+    - Shared UI Primitives (`frontend/src/components/ui/`):
+      - `Button`: Accessible variants (`primary`, `secondary`, `outline`, `ghost`, `destructive`, `profit`), responsive sizes, accessible focus rings, loading state with Lucide `Loader2`.
+      - `Card`: High-density terminal cards (`Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`) with dark obsidian surfaces (`bg-[#0E131F] border-slate-800`).
+      - `Input`: Form input with left/right icons, accessible focus states, and placeholder contrast.
+      - `StatCard`: Institutional financial KPI component displaying tabular numbers and mandatory visual distinction symbols (up arrow + `+`, down arrow + `-`, neutral minus) ensuring financial metrics never rely on color alone for color-blind accessibility.
+      - `EmptyState`: Accessible empty state layout with customizable icon, title, description, and action button.
+      - `ErrorBanner`: Dismissible and actionable error/warning/info banner with retry callbacks.
+      - `Badge`: Preserved authoritative visual classification variants (`[VERIFIED DATA]`, `[CALCULATED METRICS]`, `[HISTORICAL STATISTICS]`, etc.).
+      - `index.ts`: Centralized barrel export for all UI primitives.
+    - Application Layout Shell (`frontend/src/components/layout/`):
+      - `Sidebar`: Dual-mode responsive navigation architecture: persistent desktop sidebar (`hidden lg:flex w-64`) and slide-over mobile drawer (`lg:hidden fixed inset-0 z-50`) with backdrop overlay, Escape key listener, auto-close on route transitions, active path indicators, and live module status tags.
+      - `Header`: Refined header with mobile hamburger trigger (`onOpenMobileNav`), truncated title guards, ping sync trigger, and preserved evidence-based `boolean | null` status indicator model (`backendHealthy`, `mt5Detected`) to prevent displaying false healthy/connected states without affirmative verification.
+      - `AppShell`: Centralized layout shell managing mobile drawer open/close state, header integration, consistent main viewport padding, and scroll containers.
+      - `index.ts`: Centralized barrel export for layout components.
+    - Route Integration:
+      - Cleanly integrated `AppShell` across `/` (Executive Dashboard), `/vision` (AI Chart Screenshot Analyzer), `/learning` (Beginner Learning Hub), `/resources` (Curated Resource Catalog), and `/resource` (alias route).
+      - Preserved 100% of existing query parameters, client state, API contracts, and error handling.
+    - Verification & Quality:
+      - ESLint check (`npm.cmd run lint`): 100% clean with 0 warnings and 0 errors.
+      - Next.js production build (`npm.cmd run build`): 100% clean with all 9 static routes generated cleanly.
+      - Full backend regression test: 29/29 tests passed in 11.95s (`test_learning_hub.py`, `test_vision_analyzer.py`).
+      - Zero suppressed TypeScript errors (`@ts-ignore`, `any`).
+  - **TASK-017: MT5 Connection Wizard & Account Management UI:**
+    - Shared API Client & TypeScript Interfaces (`frontend/src/lib/api.ts`):
+      - `TradingAccount`, `TradingAccountCreatePayload`, `TradingAccountUpdatePayload`, `TradingAccountDeleteResponse`.
+      - `SyncSummaryResponse`, `SystemHealthResponse`, `CSVPreviewResponse`, `CSVImportResponse`, `JournalEntryCreatePayload`, `JournalEntryResponse`.
+      - Strict multi-tenant auth token forwarding (`access_token` / `token`) and centralized backend URL configuration.
+    - Account Management Primitives & Components (`frontend/src/components/accounts/`):
+      - `AccountCard`: High-density account card with balance/equity KPIs, sync status badges (`IDLE`, `SYNCING`, `ERROR`, `DISCONNECTED`), active account toggle, on-demand deal sync trigger, and safe data retention policy deletion confirmation dialog (with `force=true` fallback handling on 409 Conflict).
+      - `CreateAccountModal`: Multi-type account registration modal (`DEMO`, `LIVE`, `PROP_CHALLENGE`, `PROP_FUNDED`) with explicit institutional read-only security notice, AES-256-GCM encryption advisory, and strict client validation.
+      - `MT5ConnectionWizard`: 3-step setup guide covering MT5 terminal executable detection, MQL5 algorithmic trading/DLL import options, live broker session synchronization, diagnostic ping trigger, real-time sync results metrics (deals ingested, positions reconciled, duration), and resilient fallback alternatives when MT5 is offline.
+      - `CSVImporter`: Drag-and-drop & file-picker upload zone with client size/format validation (max 10MB, .csv), two-phase preview (`/csv/preview`) and commit (`/csv`) workflow, sample parsed rows table, row-level error breakdown, and idempotent duplicate skipping.
+      - `ManualTradeEntry`: Structured trade recording form with dynamic R:R ratio calculation, real-time SL/TP geometry validation, session tagging (Asia, London, NY AM, NY PM), gross/commission/swap breakdown, deterministic Net P&L calculation, and psychology/mindset tagging.
+    - Route Implementation & Layout Shell Integration:
+      - Page created at `frontend/src/app/accounts/page.tsx` with top metric cards (`StatCard`: Registered Accounts, Active Equity, MT5 Terminal Binary, Active Broker Server) and tabbed navigation.
+      - Updated `frontend/src/components/layout/sidebar.tsx` marking `/accounts` as `isImplemented: true`.
+      - Updated `frontend/src/components/layout/header.tsx` and `app-shell.tsx` with `activeAccountLabel` and direct navigation link to `/accounts`.
+    - Verification & Quality:
+      - ESLint check (`npm.cmd run lint`): 100% clean with 0 warnings and 0 errors.
+      - Next.js production build (`npm.cmd run build`): 100% clean with all 10 static routes generated cleanly.
+      - Backend regression test: 49/49 tests passed in 31.87s across `test_accounts.py`, `test_csv_and_manual_journal.py`, `test_mt5_connector.py`, and `test_mt5_sync.py`.
+      - Zero suppressed TypeScript errors (`@ts-ignore`, `any`).
+  - **TASK-018: High-Density Trading Journal & Trade Detail Drawer:**
+    - Shared API Client & TypeScript Interfaces (`frontend/src/lib/api.ts`):
+      - Added typed interfaces: `JournalListResponse`, `JournalFilterParams`, `TradeReviewItem`, `TradeReviewListResponse`.
+      - Added typed callers: `listJournalEntries`, `getJournalEntry`, `updateJournalEntry`, `deleteJournalEntry`, `fetchReviewsForTrade`, `runPostTradeReview`.
+      - Scoped all queries strictly to the authenticated user via bearer token headers.
+    - Backend Filter Refinement (`backend/app/api/v1/endpoints/reviewer.py`):
+      - Enhanced `list_reviews` (`GET /api/v1/reviewer/reviews`) with optional `journal_entry_id` query parameter for direct retrospective review retrieval.
+      - Added regression test `test_list_reviews_journal_entry_id_filter` in `backend/tests/test_trade_reviewer.py`.
+    - High-Density Trading Journal Components (`frontend/src/components/journal/`):
+      - `TradeTable`: High-density responsive data table with sticky headers, sortable columns (Date, Symbol, Volume, Net P&L), clear signed financial values (`+$124.50`, `-$45.00`, `$0.00`) with directional indicators (TrendingUp / TrendingDown), outcome badges (`+WIN`, `-LOSS`, `0 BE`, `ACTIVE`), source tags (`MT5`, `CSV`, `MANUAL`), and bounded pagination controls (25, 50, 100 per page).
+      - `TradeDetailDrawer`: Responsive slide-over drawer with backdrop overlay, Escape key listener, complete trade geometry (entry, exit, duration, volume, broker position ID), financial accounting breakdown (Gross Profit + Commission + Swap = Net P&L), risk protection parameters (SL, TP, planned R:R, monetary risk, risk %), inline discretionary notes/setup editor with live updates, and truthful AI retrospective analysis display (badges, strategy compliance, behavioral flags, confidence score) without unrequested LLM triggers.
+      - `index.ts`: Centralized barrel export.
+    - Page & Navigation Integration:
+      - Implemented `/journal` route at `frontend/src/app/journal/page.tsx` with top KPI metrics (`StatCard`: Realized Net P&L, Win Rate %, Profit Factor, Recorded Trades), multi-attribute filter bar (search symbol, account dropdown, direction pills, status/outcome buttons, source selector, start/end dates, clear filters), empty state with direct shortcuts to MT5 sync, CSV import, and manual entry, and drawer state management.
+      - Enabled `/journal` in `frontend/src/components/layout/sidebar.tsx` with `isImplemented: true`.
+    - Verification & Quality:
+      - ESLint check (`npm.cmd run lint`): 100% clean with 0 warnings and 0 errors.
+      - Next.js production build (`npm.cmd run build`): 100% clean across all 11 static routes generated cleanly.
+      - Backend regression test suite: 23/23 tests passed in 18.55s across `test_csv_and_manual_journal.py` and `test_trade_reviewer.py`.
+      - Zero suppressed TypeScript errors (`@ts-ignore`, `any`).
+  - **TASK-019: Executive Dashboard, Equity Curve & Risk Gauges UI:**
+    - Shared API Client & TypeScript Interfaces (`frontend/src/lib/api.ts`):
+      - Added typed interfaces: `PerformanceMetrics`, `AnalyticsSummaryResponse`, `EquityPoint`, `EquityCurveResponse`, `DailyRiskStatus`, `OverallRiskStatus`, `ProfitTargetStatus`, `AccountRiskEvaluationResponse`.
+      - Added typed callers: `fetchAnalyticsSummary`, `fetchEquityCurve`, `fetchAccountRisk`.
+      - Scoped all queries strictly to the authenticated user via bearer token headers.
+    - Dashboard Components (`frontend/src/components/dashboard/`):
+      - `EquityCurveChart`: Responsive Recharts visualization of actual closed trade history (`fetchEquityCurve`), view mode toggles (Closed Equity, Cumulative Net P&L, Drawdown %), high-water mark tooltip, `[CALCULATED METRICS]` badging, and summary metrics footer (Initial baseline, Current closed equity, Total net P&L, Max observed drawdown).
+      - `RiskGauges`: Real-time prop firm risk boundaries and limits (`fetchAccountRisk`) with daily loss allowance usage, trailing/static drawdown floor, profit target tracker, warning advisories, and configured threshold explanations.
+      - `index.ts`: Centralized barrel export.
+    - Executive Dashboard Overhaul (`frontend/src/app/page.tsx`):
+      - Replaced all hardcoded/synthetic demo data with live backend analytics summary (`fetchAnalyticsSummary`), chronological equity curve (`fetchEquityCurve`), and account risk evaluation (`fetchAccountRisk`).
+      - Account scope switcher allowing user to evaluate all accounts aggregated or drill down into specific accounts.
+      - Top KPI strip (`StatCard`: Realized Net P&L, Win Rate %, Profit Factor, Max Drawdown) with explicit `+`/`-` signed notations and directional icons.
+      - System diagnostics strip showing FastAPI service latency, database engine, and physical MT5 binary detection.
+      - Guided empty state with shortcuts to MT5 wizard, CSV importer, and manual trade entry when 0 trades exist.
+      - Direct navigation links to `/journal`, `/accounts`, and `/vision`.
+    - Verification & Quality:
+      - ESLint check (`npm.cmd run lint`): 100% clean with 0 warnings and 0 errors.
+      - Next.js production build (`npm.cmd run build`): 100% clean across all 11 static routes generated cleanly.
+      - Backend regression test suite: 20/20 tests passed in 8.04s across `test_analytics.py` and `test_risk_engine.py`.
+      - Zero suppressed TypeScript errors (`@ts-ignore`, `any`).
+  - **TASK-020: AI Trade Reviewer & Screenshot Analyzer UI Integration:**
+    - Shared API Client & TypeScript Interfaces (`frontend/src/lib/api.ts`):
+      - Added typed interfaces: `RiskAssessmentResult`, `PlaybookEvidenceItem`, `BehaviorContextItem`, `TradeReviewResponse`, `TradeReviewItem`, `PreTradeReviewPayload`, `StrategyMode`, `VisionKeyLevel`, `VisionMarketStructure`, `VisionTradeSetup`, `VisionScenario`, `VisionPlaybookCitation`, `ChartAnalysisResponse`.
+      - Added callers: `runPreTradeReview(payload, persist)` and `analyzeChartScreenshot(formData)`.
+      - Preserved multipart boundary generation by avoiding manual `Content-Type` header overrides in `analyzeChartScreenshot`.
+    - Dedicated Pre-Trade Reviewer Page (`frontend/src/app/review/page.tsx`):
+      - Implemented full `/review` workspace within `<AppShell>` and wrapped in `<Suspense>` for client search parameter hydration.
+      - Integrated account selector with live equity, balance, and account-type context.
+      - Input checklist form: Symbol (with automatic uppercase normalization), Direction toggle (`BUY` / `SELL`), Volume/lot size, Entry Price, Stop Loss (with visual `[MISSING_STOP_LOSS]` warning callout), Take Profit, Playbook Strategy Tag, and Setup Checklist / Reason textarea.
+      - Real-time client-side geometry analysis preventing inverted BUY/SELL stop-loss/take-profit boundaries with instant calculated R:R preview.
+      - Comprehensive review results container rendering deterministic risk validation metrics, precedence taxonomy badges (`RISK_LIMIT_BREACHED`, `MISSING_STOP_LOSS`, `PLAYBOOK_MATCH`, `PLAYBOOK_CONFLICT`, `BEHAVIORAL_PATTERN_DETECTED`, `RISK_WITHIN_CONFIGURED_LIMITS`), personal playbook rule compliance citations with match strength, behavioral pattern alerts (discipline guard for rapid re-entry after loss), synthesized review summary with deterministic math guarantees, uncertainty rating, and limitations list.
+      - Quick shortcut button linking directly to `/vision` for chart technical analysis.
+    - Screenshot Analyzer Integration Fix (`frontend/src/app/vision/page.tsx`):
+      - Eliminated hardcoded `http://127.0.0.1:8000` endpoint and manual token parsing in favor of `analyzeChartScreenshot` API client caller.
+      - Enhanced "Audit with Pre-Trade Reviewer" action with safe URI encoding (`/review?symbol=${sym}&side=${side}`).
+    - Navigation & Sidebar (`frontend/src/components/layout/sidebar.tsx`):
+      - Enabled `/review` as `isImplemented: true` with active status dot and responsive navigation.
+    - Verification & Quality:
+      - ESLint check (`npm.cmd run lint`): 100% clean with 0 warnings and 0 errors.
+      - Next.js production build (`npm.cmd run build`): 100% clean across all 12 static routes generated cleanly.
+      - Full backend regression suite: 25/25 tests passed in 9.50s across `test_trade_reviewer.py` and `test_vision_analyzer.py`.
+      - Zero suppressed TypeScript errors (`@ts-ignore`, `any`).
   - **Security & Secret Hygiene:**
     - Comprehensive `.gitignore` created.
-    - Zero secrets committed.
-- **Exact Next Task (according to TASKS.md):** **TASK-003: PostgreSQL & pgvector Schema Setup with Alembic** (Phase 2).
-- **Stop Condition:** Stopped after TASK-001 and TASK-002. Awaiting user instruction before starting TASK-003.
+    - Zero secrets committed. All credentials masked in diagnostic outputs.
+    - Insecure production fallbacks eliminated.
+- **Exact Next Task (according to TASKS.md):** **TASK-021: Learning Hub & Resource Discovery UI** (Phase 6: Frontend UI/UX Implementation).
+- **Stop Condition:** Stopped after completing TASK-020. Awaiting user review and authorization before starting TASK-021.
+
+
 
 ---
 

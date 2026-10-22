@@ -53,22 +53,79 @@ class ForbiddenError(AppException):
 
 
 class ConflictError(AppException):
-    def __init__(self, message: str = "Resource conflict or duplicate entry") -> None:
+    def __init__(
+        self, message: str = "Resource conflict or duplicate entry", details: Any = None
+    ) -> None:
         super().__init__(
             message=message,
             status_code=status.HTTP_409_CONFLICT,
             code="CONFLICT",
+            details=details,
         )
+
+
+class BadRequestError(AppException):
+    def __init__(self, message: str = "Bad request", details: Any = None) -> None:
+        super().__init__(
+            message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="BAD_REQUEST",
+            details=details,
+        )
+
+
+class ValidationException(AppException):
+    def __init__(self, message: str = "Validation failed", details: Any = None) -> None:
+        super().__init__(
+            message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="VALIDATION_ERROR",
+            details=details,
+        )
+
+
+NotFoundException = NotFoundError
+ValidationError = ValidationException
 
 
 class TerminalIntegrationError(AppException):
-    def __init__(self, message: str, details: Any = None) -> None:
+    def __init__(
+        self, message: str, details: Any = None, code: str = "MT5_INTEGRATION_ERROR"
+    ) -> None:
         super().__init__(
             message=message,
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            code="MT5_INTEGRATION_ERROR",
+            code=code,
             details=details,
         )
+
+
+class MT5Error(TerminalIntegrationError):
+    """Base exception for all MT5 operations."""
+
+    def __init__(self, message: str, details: Any = None, code: str = "MT5_ERROR") -> None:
+        super().__init__(message=message, details=details, code=code)
+
+
+class MT5InitializationError(MT5Error):
+    """Raised when MT5 terminal initialization or IPC connection fails."""
+
+    def __init__(self, message: str, details: Any = None) -> None:
+        super().__init__(message=message, details=details, code="MT5_INITIALIZATION_ERROR")
+
+
+class MT5AccountError(MT5Error):
+    """Raised when account information cannot be read or credentials fail."""
+
+    def __init__(self, message: str, details: Any = None) -> None:
+        super().__init__(message=message, details=details, code="MT5_ACCOUNT_ERROR")
+
+
+class MT5QueryError(MT5Error):
+    """Raised when reading historical deals or positions fails."""
+
+    def __init__(self, message: str, details: Any = None) -> None:
+        super().__init__(message=message, details=details, code="MT5_QUERY_ERROR")
 
 
 def setup_exception_handlers(app: FastAPI) -> None:

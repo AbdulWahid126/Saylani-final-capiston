@@ -1,423 +1,515 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
-  Area,
-  AreaChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
-  AlertTriangle,
-  ArrowUpRight,
-  CheckCircle2,
+  BarChart2,
   Cpu,
-  ShieldCheck,
+  DollarSign,
+  FileSpreadsheet,
+  FileText,
+  LineChart,
+  PenTool,
+  Percent,
+  RefreshCw,
+  Server,
+  ShieldAlert,
+  TrendingDown,
   TrendingUp,
+  Wallet,
 } from "lucide-react";
-import { Header } from "@/components/layout/header";
-import { Sidebar } from "@/components/layout/sidebar";
+import { EquityCurveChart, RiskGauges } from "@/components/dashboard";
+import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
-
-// Synthetic initial equity curve data for dashboard preview
-const sampleEquityData = [
-  { trade: "#1", equity: 100000, pnl: 0 },
-  { trade: "#5", equity: 100450, pnl: 450 },
-  { trade: "#10", equity: 100320, pnl: -130 },
-  { trade: "#15", equity: 101200, pnl: 880 },
-  { trade: "#20", equity: 101850, pnl: 650 },
-  { trade: "#25", equity: 101600, pnl: -250 },
-  { trade: "#30", equity: 102400, pnl: 800 },
-  { trade: "#35", equity: 102900, pnl: 500 },
-  { trade: "#40", equity: 103420, pnl: 520 },
-];
-
-interface HealthData {
-  status: string;
-  service: string;
-  version: string;
-  environment: string;
-  database: {
-    status: string;
-    latency_ms: number | null;
-    engine: string | null;
-  };
-  mt5_terminal_detected: boolean;
-}
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBanner } from "@/components/ui/error-banner";
+import { StatCard } from "@/components/ui/stat-card";
+import {
+  AccountRiskEvaluationResponse,
+  AnalyticsSummaryResponse,
+  EquityCurveResponse,
+  SystemHealthResponse,
+  TradingAccount,
+  fetchAccountRisk,
+  fetchAnalyticsSummary,
+  fetchEquityCurve,
+  fetchSystemHealth,
+  listTradingAccounts,
+} from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
-  const [health, setHealth] = useState<HealthData | null>(null);
-  const [loadingHealth, setLoadingHealth] = useState<boolean>(true);
-  const [errorHealth, setErrorHealth] = useState<string | null>(null);
+  // Accounts
+  const [accounts, setAccounts] = useState<TradingAccount[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [loadingAccounts, setLoadingAccounts] = useState<boolean>(true);
 
-  const fetchHealth = async () => {
-    setLoadingHealth(true);
-    setErrorHealth(null);
-    try {
-      const res = await fetch("http://127.0.0.1:8000/api/v1/health", {
-        headers: { Accept: "application/json" },
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  // Health state
+  const [health, setHealth] = useState<SystemHealthResponse | null>(null);
+  const [loadingHealth, setLoadingHealth] = useState<boolean>(true);
+
+  // Analytics summary state
+  const [analytics, setAnalytics] = useState<AnalyticsSummaryResponse | null>(null);
+  const [loadingAnalytics, setLoadingAnalytics] = useState<boolean>(true);
+  const [errorAnalytics, setErrorAnalytics] = useState<string | null>(null);
+
+  // Equity curve state
+  const [equityCurve, setEquityCurve] = useState<EquityCurveResponse | null>(null);
+  const [loadingEquity, setLoadingEquity] = useState<boolean>(true);
+  const [errorEquity, setErrorEquity] = useState<string | null>(null);
+
+  // Risk evaluation state
+  const [riskData, setRiskData] = useState<AccountRiskEvaluationResponse | null>(null);
+  const [loadingRisk, setLoadingRisk] = useState<boolean>(false);
+  const [errorRisk, setErrorRisk] = useState<string | null>(null);
+
+  // Load accounts and initial system health
+  useEffect(() => {
+    async function init() {
+      setLoadingAccounts(true);
+      try {
+        const [accs, h] = await Promise.allSettled([
+          listTradingAccounts(),
+          fetchSystemHealth(),
+        ]);
+
+        if (accs.status === "fulfilled") {
+          setAccounts(accs.value);
+          // Default to first account if available
+          if (accs.value.length > 0) {
+            setSelectedAccountId(accs.value[0].id);
+          }
+        }
+        if (h.status === "fulfilled") {
+          setHealth(h.value);
+        }
+      } finally {
+        setLoadingAccounts(false);
+        setLoadingHealth(false);
       }
-      const data: HealthData = await res.json();
-      setHealth(data);
-    } catch (err) {
-      setErrorHealth(
-        err instanceof Error ? err.message : "Failed to connect to FastAPI backend"
-      );
-      setHealth(null);
+    }
+    init();
+  }, []);
+
+  // Fetch metrics when selected account changes
+  const loadDashboardData = useCallback(async () => {
+    setLoadingAnalytics(true);
+    setLoadingEquity(true);
+    setErrorAnalytics(null);
+    setErrorEquity(null);
+
+    const accountIdParam = selectedAccountId || undefined;
+
+    // 1. Fetch Analytics Summary
+    try {
+      const summary = await fetchAnalyticsSummary(accountIdParam);
+      setAnalytics(summary);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to load performance analytics summary";
+      setErrorAnalytics(msg);
+      setAnalytics(null);
+    } finally {
+      setLoadingAnalytics(false);
+    }
+
+    // 2. Fetch Chronological Equity Curve
+    try {
+      const curve = await fetchEquityCurve(accountIdParam);
+      setEquityCurve(curve);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to load chronological equity curve";
+      setErrorEquity(msg);
+      setEquityCurve(null);
+    } finally {
+      setLoadingEquity(false);
+    }
+
+    // 3. Fetch Account Risk Standing (only when a specific account is selected)
+    if (selectedAccountId) {
+      setLoadingRisk(true);
+      setErrorRisk(null);
+      try {
+        const risk = await fetchAccountRisk(selectedAccountId);
+        setRiskData(risk);
+      } catch (err: unknown) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to evaluate account risk parameters";
+        setErrorRisk(msg);
+        setRiskData(null);
+      } finally {
+        setLoadingRisk(false);
+      }
+    } else {
+      setRiskData(null);
+      setLoadingRisk(false);
+    }
+  }, [selectedAccountId]);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, [loadDashboardData]);
+
+  const refreshHealthOnly = async () => {
+    setLoadingHealth(true);
+    try {
+      const h = await fetchSystemHealth();
+      setHealth(h);
+    } catch {
+      // non-blocking
     } finally {
       setLoadingHealth(false);
     }
   };
 
-  useEffect(() => {
-    fetchHealth();
-  }, []);
+  const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
+
+  // Currency & Formatter
+  const currency = selectedAccount?.currency || analytics?.metrics?.currency || "USD";
+
+  const formatCurrency = (val: number) => {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Math.abs(val));
+  };
+
+  const formatSignedCurrency = (val: number) => {
+    const formatted = formatCurrency(val);
+    if (val > 0) return `+${formatted}`;
+    if (val < 0) return `-${formatted}`;
+    return `$0.00`;
+  };
+
+  const metrics = analytics?.metrics;
+  const hasTrades = metrics ? metrics.total_trades > 0 || metrics.open_trades_count > 0 : false;
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background">
-      {/* Navigation Sidebar */}
-      <Sidebar />
-
-      {/* Main Content Area */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        {/* Top Header */}
-        <Header
-          backendHealthy={health ? health.status === "healthy" : errorHealth ? false : null}
-          mt5Detected={health ? health.mt5_terminal_detected : null}
-          onRefreshHealth={fetchHealth}
-          isSyncing={loadingHealth}
-        />
-
-        {/* Scrollable Dashboard Body */}
-        <main className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Page Title & Scope Banner */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <h1 className="text-xl font-bold tracking-tight text-text-primary flex items-center gap-2">
+    <AppShell
+      backendHealthy={health ? health.status === "healthy" : null}
+      mt5Detected={health ? health.mt5_terminal_detected : null}
+      onRefreshHealth={refreshHealthOnly}
+      isSyncing={loadingHealth || loadingAnalytics}
+      activeAccountLabel={
+        selectedAccount
+          ? `${selectedAccount.broker_name} (${selectedAccount.account_type})`
+          : "All Accounts (Aggregated)"
+      }
+    >
+      <div className="space-y-6">
+        {/* Header & Account Scope Switcher */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center space-x-2">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-100">
                 Executive Trading Dashboard
-                <span className="text-xs px-2 py-0.5 rounded bg-surface-raised border border-border text-text-secondary font-mono font-normal">
-                  Live Account View
-                </span>
               </h1>
-              <p className="text-xs text-text-secondary mt-0.5">
-                Deterministic performance analytics, prop firm risk monitoring, and behavior tracking.
-              </p>
+              <Badge variant="verified" className="text-xs font-mono">
+                TASK-019
+              </Badge>
             </div>
-
-            <div className="flex items-center gap-2">
-              <Badge variant="verified">[DEMO / MOCK DATA IN PREVIEW]</Badge>
-            </div>
+            <p className="text-sm text-slate-400 mt-1">
+              Deterministic performance metrics, chronological closed equity progression, and prop firm risk boundaries.
+            </p>
           </div>
 
-          {/* Foundation Health Banner */}
-          <div className="rounded-lg border border-border bg-surface p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div
-                className={`p-2 rounded-md ${
-                  health?.status === "healthy"
-                    ? "bg-profit/15 text-profit border border-profit/30"
-                    : "bg-warning/15 text-warning border border-warning/30"
-                }`}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Account Selector */}
+            <div className="flex items-center space-x-2 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 shadow-sm">
+              <Wallet className="w-4 h-4 text-cyan-400" />
+              <span className="text-xs text-slate-400 font-medium">Account:</span>
+              <select
+                aria-label="Select active trading account"
+                value={selectedAccountId}
+                onChange={(e) => setSelectedAccountId(e.target.value)}
+                disabled={loadingAccounts}
+                className="bg-slate-950 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-cyan-500 outline-none max-w-[220px]"
               >
-                <Cpu className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="text-xs font-semibold flex items-center gap-2 text-text-primary font-mono">
-                  <span>FastAPI Service:</span>
-                  <span
-                    className={
-                      health?.status === "healthy"
-                        ? "text-profit"
-                        : "text-warning"
-                    }
-                  >
-                    {health?.service || "Connecting to 127.0.0.1:8000..."}
-                  </span>
-                  {health && (
-                    <span className="text-[10px] text-text-tertiary">
-                      (v{health.version})
-                    </span>
-                  )}
-                </div>
-                <div className="text-[11px] text-text-secondary mt-0.5 flex flex-wrap items-center gap-x-4 gap-y-1">
-                  <span>
-                    Database:{" "}
-                    <strong className="text-text-primary font-mono">
-                      {health?.database.engine || "Checking..."}
-                    </strong>{" "}
-                    {health?.database.latency_ms !== null &&
-                      health?.database.latency_ms !== undefined && (
-                        <span className="text-profit font-mono">
-                          ({health.database.latency_ms}ms)
-                        </span>
-                      )}
-                  </span>
-                  <span>
-                    MT5 Terminal:{" "}
-                    <strong
-                      className={`font-mono ${
-                        health?.mt5_terminal_detected
-                          ? "text-profit"
-                          : "text-text-tertiary"
-                      }`}
-                    >
-                      {health?.mt5_terminal_detected
-                        ? "Detected on Host"
-                        : "Offline / Not Found"}
-                    </strong>
-                  </span>
-                </div>
-              </div>
+                {accounts.length === 0 && <option value="">No Accounts Registered</option>}
+                {accounts.length > 1 && <option value="">All Accounts (Aggregated)</option>}
+                {accounts.map((acc) => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.broker_name} #{acc.account_number} ({acc.account_type})
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <button
-              onClick={fetchHealth}
-              disabled={loadingHealth}
-              className="self-start md:self-center px-3 py-1.5 rounded-md text-xs font-mono bg-surface-raised hover:bg-surface-hover border border-border text-text-primary transition-all active:scale-95 disabled:opacity-50"
+            {/* Refresh Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadDashboardData}
+              disabled={loadingAnalytics || loadingEquity}
+              className="text-xs border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800"
             >
-              {loadingHealth ? "Probing..." : "Test Backend Gateway"}
-            </button>
+              <RefreshCw
+                className={cn("w-3.5 h-3.5 mr-1.5", (loadingAnalytics || loadingEquity) && "animate-spin")}
+              />
+              Refresh Metrics
+            </Button>
           </div>
+        </div>
 
-          {/* Metric KPI Cards Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Card 1: Net P&L */}
-            <div className="rounded-lg border border-border bg-surface p-4 space-y-2">
-              <div className="flex items-center justify-between text-xs text-text-secondary font-medium">
-                <span>Net Realized P&L</span>
-                <Badge variant="calc">[CALCULATED]</Badge>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <div className="text-2xl font-bold font-mono text-profit">
-                  +$3,420.50
-                </div>
-                <div className="text-xs font-mono text-profit flex items-center">
-                  <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-                  +3.42%
-                </div>
-              </div>
-              <div className="text-[11px] text-text-tertiary font-mono">
-                Gross: $4,890.00 • Comm: -$180.00 • Swap: -$49.50
-              </div>
+        {/* Global Error Banner */}
+        {errorAnalytics && (
+          <ErrorBanner
+            message={errorAnalytics}
+            onRetry={loadDashboardData}
+            className="shadow-lg"
+          />
+        )}
+
+        {/* System Diagnostics Strip */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs font-mono shadow-sm">
+          <div className="flex items-center space-x-3">
+            <div
+              className={cn(
+                "p-2 rounded-lg border",
+                health?.status === "healthy"
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                  : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+              )}
+            >
+              <Cpu className="w-4 h-4" />
             </div>
-
-            {/* Card 2: Win Rate */}
-            <div className="rounded-lg border border-border bg-surface p-4 space-y-2">
-              <div className="flex items-center justify-between text-xs text-text-secondary font-medium">
-                <span>Win Rate</span>
-                <Badge variant="calc">[CALCULATED]</Badge>
+            <div>
+              <div className="text-slate-200 font-sans font-semibold flex items-center space-x-2">
+                <span>FastAPI Analytics Engine</span>
+                <span className="text-[10px] text-slate-400 font-mono">
+                  {health ? `v${health.version}` : "Connecting..."}
+                </span>
               </div>
-              <div className="flex items-baseline justify-between">
-                <div className="text-2xl font-bold font-mono text-text-primary">
-                  64.2%
-                </div>
-                <div className="text-xs font-mono text-text-secondary">
-                  27W / 15L (42 Total)
-                </div>
-              </div>
-              <div className="text-[11px] text-text-tertiary font-mono">
-                Avg Win: $181.11 • Avg Loss: -$98.00
-              </div>
-            </div>
-
-            {/* Card 3: Profit Factor */}
-            <div className="rounded-lg border border-border bg-surface p-4 space-y-2">
-              <div className="flex items-center justify-between text-xs text-text-secondary font-medium">
-                <span>Profit Factor</span>
-                <Badge variant="calc">[CALCULATED]</Badge>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <div className="text-2xl font-bold font-mono text-text-primary">
-                  2.14
-                </div>
-                <div className="text-xs font-mono text-profit">
-                  Expectancy: +$81.44
-                </div>
-              </div>
-              <div className="text-[11px] text-text-tertiary font-mono">
-                Reward-to-Risk (R:R): 1.85 avg
-              </div>
-            </div>
-
-            {/* Card 4: Daily Drawdown Limit */}
-            <div className="rounded-lg border border-border bg-surface p-4 space-y-2">
-              <div className="flex items-center justify-between text-xs text-text-secondary font-medium">
-                <span>Daily Drawdown Limit</span>
-                <Badge variant="verified">[VERIFIED DATA]</Badge>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <div className="text-2xl font-bold font-mono text-profit">
-                  $3,150.00
-                </div>
-                <div className="text-xs font-mono text-text-secondary">
-                  63% Remaining
-                </div>
-              </div>
-              {/* Progress bar */}
-              <div className="w-full h-1.5 rounded-full bg-surface-raised overflow-hidden">
-                <div
-                  className="h-full bg-profit rounded-full"
-                  style={{ width: "37%" }}
-                />
-              </div>
-              <div className="text-[11px] text-text-tertiary font-mono">
-                Max Daily Loss: $5,000.00 • Resets 00:00 Broker Time
+              <div className="text-[11px] text-slate-400 font-sans mt-0.5 flex flex-wrap gap-x-4 gap-y-1">
+                <span>
+                  Database: <strong className="text-slate-300 font-mono">{health?.database?.engine || "PostgreSQL"}</strong>{" "}
+                  {health?.database?.latency_ms !== null && health?.database?.latency_ms !== undefined && (
+                    <span className="text-cyan-400 font-mono">({health.database.latency_ms}ms)</span>
+                  )}
+                </span>
+                <span>
+                  Host MT5 Executable:{" "}
+                  <strong className={health?.mt5_terminal_detected ? "text-emerald-400" : "text-slate-400"}>
+                    {health?.mt5_terminal_detected ? "Detected (terminal64.exe)" : "Offline / None"}
+                  </strong>
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Interactive Chart & Risk Radar Row */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Cumulative Equity Curve Chart */}
-            <div className="lg:col-span-2 rounded-lg border border-border bg-surface p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-profit" />
-                    Account Growth & Equity Curve
-                  </h2>
-                  <p className="text-[11px] text-text-secondary">
-                    Realized balance progression across completed MT5 trades
-                  </p>
-                </div>
-                <Badge variant="calc">[CALCULATED METRICS]</Badge>
-              </div>
-
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={sampleEquityData}
-                    margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                  >
-                    <defs>
-                      <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#1BC773" stopOpacity={0.25} />
-                        <stop offset="95%" stopColor="#1BC773" stopOpacity={0.0} />
-                      </linearGradient>
-                    </defs>
-                    <XAxis
-                      dataKey="trade"
-                      stroke="#64748B"
-                      fontSize={11}
-                      tickLine={false}
-                      axisLine={{ stroke: "#222C42" }}
-                    />
-                    <YAxis
-                      stroke="#64748B"
-                      fontSize={11}
-                      domain={["auto", "auto"]}
-                      tickLine={false}
-                      axisLine={{ stroke: "#222C42" }}
-                      tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "#0E131F",
-                        borderColor: "#222C42",
-                        borderRadius: "6px",
-                        fontSize: "12px",
-                        fontFamily: "monospace",
-                      }}
-                      itemStyle={{ color: "#1BC773" }}
-                      labelStyle={{ color: "#94A3B8" }}
-                      formatter={(value) => [
-                        typeof value === "number" ? `$${value.toLocaleString()}` : String(value),
-                        "Equity",
-                      ]}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="equity"
-                      stroke="#1BC773"
-                      strokeWidth={2}
-                      fillOpacity={1}
-                      fill="url(#equityGrad)"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Behavioral Guard & Rule Compliance */}
-            <div className="rounded-lg border border-border bg-surface p-5 space-y-4 flex flex-col justify-between">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-profit" />
-                    Behavior Guard
-                  </h2>
-                  <Badge variant="verified">[RULES ACTIVE]</Badge>
-                </div>
-                <p className="text-[11px] text-text-secondary">
-                  Real-time algorithmic monitoring against emotional trading patterns
-                </p>
-
-                <div className="space-y-2 pt-2">
-                  <div className="p-2.5 rounded bg-surface-raised border border-border flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-profit shrink-0" />
-                      <span className="text-xs text-text-secondary">
-                        Revenge Trading Guard
-                      </span>
-                    </div>
-                    <span className="text-xs font-mono text-profit">
-                      0 Violations
-                    </span>
-                  </div>
-
-                  <div className="p-2.5 rounded bg-surface-raised border border-border flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-profit shrink-0" />
-                      <span className="text-xs text-text-secondary">
-                        Max Daily Trade Count
-                      </span>
-                    </div>
-                    <span className="text-xs font-mono text-text-primary">
-                      2 / 5 Trades
-                    </span>
-                  </div>
-
-                  <div className="p-2.5 rounded bg-surface-raised border border-border flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-profit shrink-0" />
-                      <span className="text-xs text-text-secondary">
-                        Max Risk Per Trade (1.0%)
-                      </span>
-                    </div>
-                    <span className="text-xs font-mono text-profit">
-                      0.85% Max
-                    </span>
-                  </div>
-
-                  <div className="p-2.5 rounded bg-surface-raised border border-border flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-warning shrink-0" />
-                      <span className="text-xs text-text-secondary">
-                        Session Drift
-                      </span>
-                    </div>
-                    <span className="text-xs font-mono text-warning">
-                      1 Outside Window
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-3 rounded bg-surface-raised/40 border border-border text-[11px] text-text-tertiary">
-                <span className="font-semibold text-text-secondary">
-                  Guiding Philosophy:
-                </span>{" "}
-                &quot;The AI understands the trader, not just the market.&quot;
-              </div>
-            </div>
+          <div className="flex items-center space-x-2 font-sans">
+            <Link href="/accounts">
+              <Button variant="ghost" size="sm" className="h-7 text-xs text-cyan-400 hover:text-cyan-300">
+                <Server className="w-3.5 h-3.5 mr-1" />
+                MT5 &amp; Accounts
+              </Button>
+            </Link>
+            <Link href="/journal">
+              <Button variant="ghost" size="sm" className="h-7 text-xs text-slate-300 hover:text-slate-100">
+                <FileText className="w-3.5 h-3.5 mr-1" />
+                Trading Journal
+              </Button>
+            </Link>
+            <Link href="/vision">
+              <Button variant="ghost" size="sm" className="h-7 text-xs text-purple-400 hover:text-purple-300">
+                <BarChart2 className="w-3.5 h-3.5 mr-1" />
+                Chart Vision
+              </Button>
+            </Link>
           </div>
-        </main>
+        </div>
+
+        {/* Top KPI Metrics Cards Row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Card 1: Realized Net P&L */}
+          <StatCard
+            label="Realized Net P&L"
+            value={metrics ? formatSignedCurrency(metrics.net_pnl) : loadingAnalytics ? "..." : "$0.00"}
+            subtext={
+              metrics
+                ? `Gross: $${metrics.gross_profit.toFixed(0)} • Comm: -$${metrics.total_commission.toFixed(0)} • Swap: $${metrics.total_swap.toFixed(0)}`
+                : "Awaiting closed trade records"
+            }
+            trend={metrics && metrics.net_pnl > 0 ? "up" : metrics && metrics.net_pnl < 0 ? "down" : "neutral"}
+            icon={
+              metrics && metrics.net_pnl >= 0 ? (
+                <TrendingUp className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <TrendingDown className="w-4 h-4 text-rose-400" />
+              )
+            }
+            valueClassName={
+              metrics && metrics.net_pnl > 0
+                ? "text-emerald-400 font-mono"
+                : metrics && metrics.net_pnl < 0
+                ? "text-rose-400 font-mono"
+                : "text-slate-200 font-mono"
+            }
+          />
+
+          {/* Card 2: Win Rate */}
+          <StatCard
+            label="Win Rate"
+            value={metrics ? `${metrics.win_rate.toFixed(1)}%` : loadingAnalytics ? "..." : "0.0%"}
+            subtext={
+              metrics
+                ? `${metrics.winning_trades}W / ${metrics.losing_trades}L / ${metrics.breakeven_trades}BE (${metrics.total_trades} total)`
+                : "Zero closed trades"
+            }
+            trend={metrics && metrics.win_rate >= 50 ? "up" : metrics && metrics.win_rate > 0 ? "down" : "neutral"}
+            icon={<Percent className="w-4 h-4 text-cyan-400" />}
+            valueClassName={
+              metrics && metrics.win_rate >= 50
+                ? "text-emerald-400 font-mono"
+                : metrics && metrics.win_rate > 0
+                ? "text-amber-400 font-mono"
+                : "text-slate-200 font-mono"
+            }
+          />
+
+          {/* Card 3: Profit Factor */}
+          <StatCard
+            label="Profit Factor"
+            value={
+              metrics?.profit_factor !== null && metrics?.profit_factor !== undefined
+                ? metrics.profit_factor.toFixed(2)
+                : metrics?.gross_profit && metrics.gross_profit > 0
+                ? "∞"
+                : "0.00"
+            }
+            subtext={
+              metrics
+                ? `Expectancy: ${formatSignedCurrency(metrics.expectancy_per_trade)}/trade`
+                : "Gross Profit / Gross Loss"
+            }
+            icon={<DollarSign className="w-4 h-4 text-cyan-400" />}
+            valueClassName="text-cyan-400 font-mono"
+          />
+
+          {/* Card 4: Max Drawdown */}
+          <StatCard
+            label="Max Observed Drawdown"
+            value={
+              metrics
+                ? `-${metrics.max_drawdown_percentage.toFixed(1)}%`
+                : loadingAnalytics
+                ? "..."
+                : "0.0%"
+            }
+            subtext={
+              metrics
+                ? `Monetary drop: ${formatCurrency(metrics.max_drawdown_monetary)}`
+                : "Peak-to-trough historical drop"
+            }
+            icon={<ShieldAlert className="w-4 h-4 text-rose-400" />}
+            valueClassName="text-rose-400 font-mono"
+          />
+        </div>
+
+        {/* Empty State when no accounts or zero trades exist */}
+        {!hasTrades && !loadingAnalytics && (
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 shadow-xl">
+            <EmptyState
+              title="No Recorded Trades Found"
+              description="Your trading dashboard calculates deterministic metrics from verified closed trades. Connect an MT5 terminal, import a broker CSV statement, or enter manual trades to populate your analytics and equity curve."
+              icon={<LineChart className="w-10 h-10 text-cyan-400" />}
+              action={
+                <div className="flex flex-wrap items-center gap-3">
+                  <Link href="/accounts">
+                    <Button variant="primary" size="sm">
+                      <Server className="w-3.5 h-3.5 mr-1" />
+                      Connect MT5 Terminal
+                    </Button>
+                  </Link>
+                  <Link href="/accounts?tab=csv">
+                    <Button variant="secondary" size="sm">
+                      <FileSpreadsheet className="w-3.5 h-3.5 mr-1" />
+                      Import CSV Statement
+                    </Button>
+                  </Link>
+                  <Link href="/accounts?tab=manual">
+                    <Button variant="outline" size="sm">
+                      <PenTool className="w-3.5 h-3.5 mr-1" />
+                      Record Manual Trade
+                    </Button>
+                  </Link>
+                </div>
+              }
+            />
+          </div>
+        )}
+
+        {/* Interactive Charts & Risk Gauges Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left: Chronological Equity & Cumulative P&L Curve */}
+          <div className="lg:col-span-2">
+            <EquityCurveChart
+              data={equityCurve}
+              loading={loadingEquity}
+              error={errorEquity}
+              onRetry={loadDashboardData}
+              currency={currency}
+            />
+          </div>
+
+          {/* Right: Prop Firm Risk & Drawdown Gauges */}
+          <div>
+            <RiskGauges
+              riskData={riskData}
+              loading={loadingRisk}
+              error={errorRisk}
+              onRetry={loadDashboardData}
+              selectedAccountId={selectedAccountId}
+            />
+          </div>
+        </div>
+
+        {/* Quick Navigation Cards Strip */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+          <Link
+            href="/journal"
+            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-cyan-500/40 transition-all block group shadow-md"
+          >
+            <div className="flex items-center space-x-2 text-cyan-400 font-semibold text-sm mb-1">
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>High-Density Trading Journal</span>
+            </div>
+            <p className="text-xs text-slate-400">
+              Inspect granular trade execution geometry, commission/swap fees, discretionary notes, and AI retrospective audits.
+            </p>
+          </Link>
+
+          <Link
+            href="/accounts"
+            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-amber-500/40 transition-all block group shadow-md"
+          >
+            <div className="flex items-center space-x-2 text-amber-400 font-semibold text-sm mb-1">
+              <Wallet className="w-4 h-4" />
+              <span>Accounts &amp; MT5 Synchronization</span>
+            </div>
+            <p className="text-xs text-slate-400">
+              Manage multi-broker accounts, configure investor credentials with AES-256-GCM, and run on-demand deal sync.
+            </p>
+          </Link>
+
+          <Link
+            href="/vision"
+            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-purple-500/40 transition-all block group shadow-md"
+          >
+            <div className="flex items-center space-x-2 text-purple-400 font-semibold text-sm mb-1">
+              <BarChart2 className="w-4 h-4" />
+              <span>AI Chart Vision Analyzer</span>
+            </div>
+            <p className="text-xs text-slate-400">
+              Upload chart screenshots for automated ICT/SMC market structure extraction, key levels, and invalidation scenarios.
+            </p>
+          </Link>
+        </div>
       </div>
-    </div>
+    </AppShell>
   );
 }
